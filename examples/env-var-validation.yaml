@@ -1,0 +1,21 @@
+id: example-env-var-validation
+category: strategy
+priority: medium
+domain: general
+content: "Validate required environment variables at startup, not at first use. Fail fast with a clear error message listing all missing variables."
+trigger: "When writing CLI tools or services that depend on environment variables"
+steps:
+  - "List all required env vars at the top of your entry point"
+  - "Check each one exists and is non-empty before proceeding"
+  - "Print all missing variables at once, not one at a time"
+  - "Exit with a non-zero code and actionable error message"
+negative_example: "Letting the app crash 5 minutes later when it first tries to use an API key"
+tags:
+  - cli
+  - configuration
+source:
+  trajectory_id: example
+  outcome: strategy
+effectiveness:
+  applied_count: 0
+  success_count: 0

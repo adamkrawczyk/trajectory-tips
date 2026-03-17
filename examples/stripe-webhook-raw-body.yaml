@@ -1,0 +1,21 @@
+id: example-stripe-webhook-raw-body
+category: recovery
+priority: high
+domain: coding
+content: "Stripe webhook signature verification requires the raw request body. Use express.raw({type: 'application/json'}) on the webhook route BEFORE any JSON parser."
+trigger: "When setting up Stripe webhook endpoints in Express/Node.js"
+steps:
+  - "app.post('/webhook', express.raw({type: 'application/json'}), handler)"
+  - "In handler: stripe.webhooks.constructEvent(req.body, sig, endpointSecret)"
+  - "Do NOT use express.json() on the webhook route"
+negative_example: "Using express.json() middleware before the webhook route — breaks signature verification"
+tags:
+  - stripe
+  - webhooks
+  - express
+source:
+  trajectory_id: example
+  outcome: recovery
+effectiveness:
+  applied_count: 0
+  success_count: 0

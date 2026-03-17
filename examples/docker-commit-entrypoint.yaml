@@ -1,0 +1,19 @@
+id: example-docker-commit-entrypoint
+category: optimization
+priority: high
+domain: infra
+content: "When using docker commit, ALWAYS include --change 'ENTRYPOINT [...]' --change 'CMD []'. Docker commit inherits the runtime entrypoint, NOT the Dockerfile's."
+trigger: "When committing changes to a Docker container"
+steps:
+  - "docker commit --change 'ENTRYPOINT [\"/entrypoint.sh\"]' --change 'CMD []' container_id image:tag"
+  - "Verify with: docker inspect image:tag | jq '.[0].Config.Entrypoint'"
+negative_example: "docker commit container_id image:tag — inherits runtime entrypoint which may be wrong"
+tags:
+  - docker
+  - entrypoint
+source:
+  trajectory_id: example
+  outcome: recovery
+effectiveness:
+  applied_count: 0
+  success_count: 0

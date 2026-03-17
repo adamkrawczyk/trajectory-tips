@@ -1,0 +1,20 @@
+{
+  "trajectory_outcome": "recovery",
+  "decision_attribution": "Port conflict happened due to stale process.",
+  "tips": [
+    {
+      "category": "recovery",
+      "priority": "high",
+      "domain": "infra",
+      "content": "Use ExecStartPre to kill stale process on service port",
+      "purpose": "Prevents restart failures",
+      "trigger": "When updating systemd service files",
+      "steps": [
+        "Add ExecStartPre=-/usr/bin/fuser -k 3000/tcp",
+        "Restart the service"
+      ],
+      "negative_example": "Do not rely only on app-level retries",
+      "tags": ["systemd", "deployment"]
+    }
+  ]
+}

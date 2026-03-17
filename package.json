@@ -1,0 +1,45 @@
+{
+  "name": "trajectory-tips",
+  "version": "0.1.0",
+  "description": "Trajectory-informed memory generation for self-improving agent systems",
+  "license": "MIT",
+  "bin": {
+    "tips": "./bin/tips.js"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lint": "eslint src/ test/ bin/"
+  },
+  "dependencies": {
+    "chalk": "^5.0.0",
+    "commander": "^12.0.0",
+    "openai": "^4.0.0",
+    "yaml": "^2.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "eslint": "^9.22.0",
+    "globals": "^16.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adamkrawczyk/trajectory-tips.git"
+  },
+  "homepage": "https://github.com/adamkrawczyk/trajectory-tips#readme",
+  "bugs": {
+    "url": "https://github.com/adamkrawczyk/trajectory-tips/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "cli",
+    "embeddings",
+    "memory",
+    "prompt-engineering",
+    "retrieval",
+    "trajectory"
+  ]
+}
