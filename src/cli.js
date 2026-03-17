@@ -56,6 +56,8 @@ async function promptForAddFields({
 async function addTipFromOptions(options, {
   saveTipImpl = saveTip,
   normalizeTipCandidateImpl = normalizeTipCandidate,
+  tipsDir = getTipsDir(),
+  indexPath = getIndexPath(),
   embedder,
   promptForFields = promptForAddFields,
   yaml = YAML
@@ -111,23 +113,44 @@ async function addTipFromOptions(options, {
     return { tip, saved: false, dryRun: true };
   }
 
-  const result = await saveTipImpl(tip, { embedder, tipsDir: getTipsDir(), indexPath: getIndexPath() });
+  const result = await saveTipImpl(tip, { embedder, tipsDir, indexPath });
   if (result.skipped) {
     console.log(chalk.yellow(`Skipped ${tip.id}: ${result.reason}`));
     return { ...result, saved: false, dryRun: false };
   }
 
-  console.log(chalk.green(`Saved ${tip.id} to ${getTipsDir()}`));
+  console.log(chalk.green(`Saved ${tip.id} to ${tipsDir}`));
   return { ...result, saved: true, dryRun: false };
 }
 
 export function createProgram(deps = {}) {
   const {
     addTip = addTipFromOptions,
+    extractTipsFromInputImpl = extractTipsFromInput,
+    analyzeTrajectoryIntelligenceImpl = analyzeTrajectoryIntelligence,
+    batchContrastiveAnalysisImpl = batchContrastiveAnalysis,
+    injectTipsImpl = injectTips,
+    queryTipsImpl = queryTips,
+    consolidateTipsImpl = consolidateTips,
+    recordFeedbackImpl = recordFeedback,
+    reindexAllTipsImpl = reindexAllTips,
+    importTipsFromInputsImpl = importTipsFromInputs,
+    loadAllTipsImpl = loadAllTips,
+    seedBaseTipsImpl,
     embedder,
     promptForFields,
-    yaml
+    yaml,
+    runtimeContext = {}
   } = deps;
+
+  function resolveContext() {
+    return {
+      tipsDir: runtimeContext.tipsDir ?? getTipsDir(),
+      indexPath: runtimeContext.indexPath ?? getIndexPath(),
+      embedder: runtimeContext.embedder ?? embedder
+    };
+  }
+
   const program = new Command();
   program
     .name('tips')
@@ -145,14 +168,19 @@ export function createProgram(deps = {}) {
     .option('--tags <tags>', 'comma-separated tags')
     .option('--source-trajectory <id>', 'source trajectory id')
     .option('--dry-run', 'print YAML without writing')
-    .action(async (options, command) => addTip({
-      ...options,
-      getOptionValueSource: (name) => command.getOptionValueSource(name)
-    }, {
-      embedder,
-      promptForFields,
-      yaml
-    }));
+    .action(async (options, command) => {
+      const context = resolveContext();
+      return addTip({
+        ...options,
+        getOptionValueSource: (name) => command.getOptionValueSource(name)
+      }, {
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder,
+        promptForFields,
+        yaml
+      });
+    });
 
   program
     .command('extract')
@@ -164,11 +192,15 @@ export function createProgram(deps = {}) {
     .option('--no-analyze', 'skip Phase 1 trajectory analysis (faster, lower quality)')
     .option('--verbose', 'show full analysis output')
     .action(async (input, options) => {
-      const result = await extractTipsFromInput(input, {
+      const context = resolveContext();
+      const result = await extractTipsFromInputImpl(input, {
         section: options.section,
         dryRun: options.dryRun,
         domain: options.domain,
-        analyze: options.analyze !== false
+        analyze: options.analyze !== false,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
 
       console.log(chalk.green(`Outcome: ${result.trajectory_outcome}`));
@@ -233,7 +265,7 @@ export function createProgram(deps = {}) {
       }
 
       console.log(chalk.dim('Running Phase 1 trajectory analysis...'));
-      const analysis = await analyzeTrajectoryIntelligence(text, { domain: options.domain });
+      const analysis = await analyzeTrajectoryIntelligenceImpl(text, { domain: options.domain });
 
       if (options.json) {
         console.log(JSON.stringify(analysis, null, 2));
@@ -298,11 +330,15 @@ export function createProgram(deps = {}) {
     .option('--top <n>', 'result limit', '5')
     .option('--json', 'output JSON')
     .action(async (description, options) => {
-      const result = await queryTips(description, {
+      const context = resolveContext();
+      const result = await queryTipsImpl(description, {
         domain: options.domain,
         category: options.category,
         priority: options.priority,
-        top: Number(options.top || 5)
+        top: Number(options.top || 5),
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
 
       printWarnings(result.warnings);
@@ -327,10 +363,15 @@ export function createProgram(deps = {}) {
     .option('--focus <category>', 'focus category filter')
     .option('--domain <domain>', 'domain filter')
     .action(async (description, options) => {
-      const result = await injectTips(description, {
+      const context = resolveContext();
+      const result = await injectTipsImpl(description, {
         focus: options.focus,
         maxTokens: Number(options.maxTokens || 2000),
-        domain: options.domain
+        domain: options.domain,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder,
+        queryTipsImpl
       });
       printWarnings(result.warnings);
       console.log(result.prompt);
@@ -345,8 +386,8 @@ export function createProgram(deps = {}) {
     .option('--since <date>', 'ISO date lower bound')
     .option('--stats', 'show stats summary')
     .action(async (options) => {
-      const tipsDir = getTipsDir();
-      const { tips, warnings } = await loadAllTips(tipsDir);
+      const context = resolveContext();
+      const { tips, warnings } = await loadAllTipsImpl(context.tipsDir);
       printWarnings(warnings);
 
       const priorities = normalizeListOption(options.priority);
@@ -383,9 +424,13 @@ export function createProgram(deps = {}) {
     .option('--dry-run', 'preview merges')
     .option('--threshold <n>', 'similarity threshold', '0.85')
     .action(async (options) => {
-      const result = await consolidateTips({
+      const context = resolveContext();
+      const result = await consolidateTipsImpl({
         dryRun: options.dryRun,
-        threshold: Number(options.threshold || 0.85)
+        threshold: Number(options.threshold || 0.85),
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
       printWarnings(result.warnings);
       console.log(JSON.stringify(result, null, 2));
@@ -397,7 +442,8 @@ export function createProgram(deps = {}) {
     .argument('<tip-id>', 'tip id')
     .argument('<outcome>', 'success|failure|irrelevant')
     .action(async (tipId, outcome) => {
-      const result = await recordFeedback(tipId, outcome);
+      const context = resolveContext();
+      const result = await recordFeedbackImpl(tipId, outcome, { tipsDir: context.tipsDir });
       console.log(JSON.stringify({
         id: result.id,
         effectiveness: result.effectiveness,
@@ -430,10 +476,14 @@ export function createProgram(deps = {}) {
         throw new Error('No valid input files found. If using glob patterns, let your shell expand them.');
       }
 
-      const results = await importTipsFromInputs(existing, {
+      const context = resolveContext();
+      const results = await importTipsFromInputsImpl(existing, {
         section: options.section,
         domain: options.domain,
-        dryRun: options.dryRun
+        dryRun: options.dryRun,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
 
       const summary = {
@@ -448,7 +498,12 @@ export function createProgram(deps = {}) {
     .command('reindex')
     .description('Rebuild embeddings index from tip YAML files')
     .action(async () => {
-      const result = await reindexAllTips();
+      const context = resolveContext();
+      const result = await reindexAllTipsImpl({
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
+      });
       printWarnings(result.warnings);
       console.log(chalk.green(`Reindexed ${result.count} tip(s)`));
     });
@@ -460,9 +515,14 @@ export function createProgram(deps = {}) {
     .option('--skip-embeddings', 'copy YAMLs without generating embeddings')
     .action(async (options) => {
       const { seedBaseTips } = await import('./seed.js');
-      const result = await seedBaseTips({
+      const context = resolveContext();
+      const activeSeedBaseTips = seedBaseTipsImpl || seedBaseTips;
+      const result = await activeSeedBaseTips({
         baseDir: options.baseDir,
-        skipEmbeddings: options.skipEmbeddings
+        skipEmbeddings: options.skipEmbeddings,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
       console.log(chalk.green(`Seeded ${result.count} base tip(s)`));
       if (result.skipped > 0) {
@@ -495,9 +555,13 @@ export function createProgram(deps = {}) {
       }
 
       console.log(chalk.dim(`Analyzing ${trajectories.length} trajectories...`));
-      const results = await batchContrastiveAnalysis(trajectories, {
+      const context = resolveContext();
+      const results = await batchContrastiveAnalysisImpl(trajectories, {
         domain: options.domain,
-        dryRun: options.dryRun
+        dryRun: options.dryRun,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
 
       if (options.json) {
@@ -535,8 +599,8 @@ export function createProgram(deps = {}) {
     .description('Show tip effectiveness stats, identify stale/failing tips')
     .option('--json', 'output JSON')
     .action(async (options) => {
-      const tipsDir = getTipsDir();
-      const { tips, warnings } = await loadAllTips(tipsDir);
+      const context = resolveContext();
+      const { tips, warnings } = await loadAllTipsImpl(context.tipsDir);
       printWarnings(warnings);
 
       const stats = {

@@ -5,38 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { createProgram } from '../src/cli.js';
 import { loadIndex } from '../src/store.js';
-import { readTipYaml, getIndexPath } from '../src/utils.js';
+import { readTipYaml } from '../src/utils.js';
+import { fakeEmbedder } from './helpers.js';
 
-function fakeEmbedder(text) {
-  // Produce distinct vectors for different texts using a simple hash spread
-  const dims = 16;
-  const vec = new Array(dims).fill(0);
-  for (let i = 0; i < text.length; i++) {
-    vec[(i * 7 + text.charCodeAt(i)) % dims] += text.charCodeAt(i) * (i + 1);
-  }
-  // Normalize
-  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
-  return Promise.resolve(vec.map(v => v / mag));
-}
-
-async function withTempCliEnv(fn) {
-  const prevCwd = process.cwd();
-  const prevTipsDir = process.env.TIPS_DIR;
+async function withTempCliContext(fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tips-add-'));
   const tipsDir = path.join(dir, 'tips');
-
-  process.chdir(dir);
-  process.env.TIPS_DIR = tipsDir;
+  const indexPath = path.join(dir, 'index.json');
 
   try {
-    await fn({ dir, tipsDir });
+    await fn({ dir, tipsDir, indexPath });
   } finally {
-    process.chdir(prevCwd);
-    if (prevTipsDir === undefined) {
-      delete process.env.TIPS_DIR;
-    } else {
-      process.env.TIPS_DIR = prevTipsDir;
-    }
+    await fs.rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -57,8 +37,10 @@ async function captureLogs(fn) {
 }
 
 test('tips add with all flags writes yaml and updates index', async () => {
-  await withTempCliEnv(async ({ _dir, tipsDir }) => {
-    const program = createProgram({ embedder: fakeEmbedder });
+  await withTempCliContext(async ({ tipsDir, indexPath }) => {
+    const program = createProgram({
+      runtimeContext: { tipsDir, indexPath, embedder: fakeEmbedder }
+    });
 
     await program.parseAsync([
       'add',
@@ -84,14 +66,16 @@ test('tips add with all flags writes yaml and updates index', async () => {
     assert.deepEqual(tip.tags, ['workers', 'locks', 'recovery']);
     assert.equal(tip.source.trajectory_id, 'traj-123');
 
-    const index = await loadIndex(getIndexPath());
+    const index = await loadIndex(indexPath);
     assert.ok(index.tips[tip.id]);
   });
 });
 
 test('tips add with only required flags applies defaults', async () => {
-  await withTempCliEnv(async ({ tipsDir }) => {
-    const program = createProgram({ embedder: fakeEmbedder });
+  await withTempCliContext(async ({ tipsDir, indexPath }) => {
+    const program = createProgram({
+      runtimeContext: { tipsDir, indexPath, embedder: fakeEmbedder }
+    });
 
     await program.parseAsync([
       'add',
@@ -112,8 +96,10 @@ test('tips add with only required flags applies defaults', async () => {
 });
 
 test('tips add dry run prints yaml without writing files', async () => {
-  await withTempCliEnv(async ({ _dir, tipsDir }) => {
-    const program = createProgram({ embedder: fakeEmbedder });
+  await withTempCliContext(async ({ tipsDir, indexPath }) => {
+    const program = createProgram({
+      runtimeContext: { tipsDir, indexPath, embedder: fakeEmbedder }
+    });
 
     const output = await captureLogs(async () => {
       await program.parseAsync([
@@ -133,8 +119,10 @@ test('tips add dry run prints yaml without writing files', async () => {
 });
 
 test('tips add errors when required flags are missing', async () => {
-  await withTempCliEnv(async () => {
-    const program = createProgram({ embedder: fakeEmbedder });
+  await withTempCliContext(async ({ tipsDir, indexPath }) => {
+    const program = createProgram({
+      runtimeContext: { tipsDir, indexPath, embedder: fakeEmbedder }
+    });
 
     await assert.rejects(
       program.parseAsync([

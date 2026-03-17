@@ -72,7 +72,10 @@ export async function extractTipsFromInput(input, {
   dryRun = false,
   sourceDescription = '',
   client,
-  analyze = true
+  analyze = true,
+  tipsDir,
+  indexPath,
+  embedder
 } = {}) {
   const raw = await readTextInput(input);
   const sectioned = extractMarkdownSection(raw, section);
@@ -118,7 +121,7 @@ export async function extractTipsFromInput(input, {
     }));
 
   if (!dryRun) {
-    await saveManyTips(tips);
+    await saveManyTips(tips, { tipsDir, indexPath, embedder });
   }
 
   return {
