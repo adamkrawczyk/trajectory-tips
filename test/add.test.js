@@ -118,6 +118,79 @@ test('tips add dry run prints yaml without writing files', async () => {
   });
 });
 
+test('tips add interactive mode uses promptForFields when no CLI flags given', async () => {
+  await withTempCliContext(async ({ tipsDir, indexPath }) => {
+    const stubbedPrompt = async () => ({
+      content: 'Always check disk space before large imports',
+      trigger: 'Import job fails silently with no error'
+    });
+
+    const program = createProgram({
+      runtimeContext: { tipsDir, indexPath, embedder: fakeEmbedder },
+      promptForFields: stubbedPrompt
+    });
+
+    await program.parseAsync(['add'], { from: 'user' });
+
+    const files = await fs.readdir(tipsDir);
+    assert.equal(files.length, 1);
+
+    const tip = await readTipYaml(path.join(tipsDir, files[0]));
+    assert.equal(tip.content, 'Always check disk space before large imports');
+    assert.equal(tip.trigger, 'Import job fails silently with no error');
+    assert.equal(tip.category, 'strategy');
+    assert.equal(tip.source.trajectory_id, 'manual');
+  });
+});
+
+test('tips add interactive mode dry-run prints yaml without saving', async () => {
+  await withTempCliContext(async ({ tipsDir, indexPath }) => {
+    const stubbedPrompt = async () => ({
+      content: 'Flush DNS cache after changing nameservers',
+      trigger: 'DNS changes not propagating locally'
+    });
+
+    const program = createProgram({
+      runtimeContext: { tipsDir, indexPath, embedder: fakeEmbedder },
+      promptForFields: stubbedPrompt
+    });
+
+    const output = await captureLogs(async () => {
+      await program.parseAsync(['add', '--dry-run'], { from: 'user' });
+    });
+
+    assert.match(output, /content: Flush DNS cache after changing nameservers/);
+    await assert.rejects(fs.access(tipsDir));
+  });
+});
+
+test('tips add with extended schema flags (steps, purpose, negative-example)', async () => {
+  await withTempCliContext(async ({ tipsDir, indexPath }) => {
+    const program = createProgram({
+      runtimeContext: { tipsDir, indexPath, embedder: fakeEmbedder }
+    });
+
+    await program.parseAsync([
+      'add',
+      '--content', 'Use connection pooling for database queries',
+      '--trigger', 'Database connections exhaust under load',
+      '--steps', 'Configure pool size,Set idle timeout,Monitor active connections',
+      '--purpose', 'Prevent connection exhaustion in production',
+      '--negative-example', 'Opening a new connection per request without pooling',
+      '--domain', 'coding',
+      '--priority', 'high'
+    ], { from: 'user' });
+
+    const files = await fs.readdir(tipsDir);
+    assert.equal(files.length, 1);
+
+    const tip = await readTipYaml(path.join(tipsDir, files[0]));
+    assert.deepEqual(tip.steps, ['Configure pool size', 'Set idle timeout', 'Monitor active connections']);
+    assert.equal(tip.purpose, 'Prevent connection exhaustion in production');
+    assert.equal(tip.negative_example, 'Opening a new connection per request without pooling');
+  });
+});
+
 test('tips add errors when required flags are missing', async () => {
   await withTempCliContext(async ({ tipsDir, indexPath }) => {
     const program = createProgram({

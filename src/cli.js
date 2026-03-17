@@ -69,8 +69,10 @@ async function addTipFromOptions(options, {
     'domain',
     'priority',
     'tags',
-    'sourceTrajectory',
-    'dryRun'
+    'steps',
+    'purpose',
+    'negativeExample',
+    'sourceTrajectory'
   ];
 
   const hasCliFlags = typeof options.getOptionValueSource === 'function'
@@ -92,13 +94,17 @@ async function addTipFromOptions(options, {
     throw new Error('Tip content and trigger are required.');
   }
 
+  const steps = normalizeListOption(options.steps);
   const tip = normalizeTipCandidateImpl({
     category: options.category,
     priority: options.priority,
     domain: options.domain,
     content,
     trigger,
-    tags: normalizeListOption(options.tags)
+    tags: normalizeListOption(options.tags),
+    steps: steps || [],
+    purpose: options.purpose || '',
+    negative_example: options.negativeExample || ''
   }, {
     domain: options.domain,
     sourceTrajectoryId: options.sourceTrajectory || 'manual',
@@ -166,6 +172,9 @@ export function createProgram(deps = {}) {
     .option('--domain <domain>', 'tip domain', 'general')
     .option('--priority <priority>', 'tip priority', 'medium')
     .option('--tags <tags>', 'comma-separated tags')
+    .option('--steps <steps>', 'comma-separated action steps')
+    .option('--purpose <purpose>', 'why this tip matters')
+    .option('--negative-example <example>', 'what NOT to do')
     .option('--source-trajectory <id>', 'source trajectory id')
     .option('--dry-run', 'print YAML without writing')
     .action(async (options, command) => {
