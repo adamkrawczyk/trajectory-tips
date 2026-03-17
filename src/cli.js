@@ -1,14 +1,22 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createInterface as createReadlineInterface } from 'node:readline/promises';
 import { Command } from 'commander';
 import chalk from 'chalk';
+import YAML from 'yaml';
 import { extractTipsFromInput, importTipsFromInputs } from './extract.js';
 import { analyzeTrajectoryIntelligence } from './analyzer.js';
 import { batchContrastiveAnalysis } from './contrastive.js';
 import { injectTips } from './inject.js';
 import { queryTips } from './retrieve.js';
-import { consolidateTips, recordFeedback, reindexAllTips } from './store.js';
-import { getTipsDir, loadAllTips, normalizeListOption } from './utils.js';
+import {
+  consolidateTips,
+  normalizeTipCandidate,
+  recordFeedback,
+  reindexAllTips,
+  saveTip
+} from './store.js';
+import { getTipsDir, getIndexPath, loadAllTips, normalizeListOption } from './utils.js';
 
 function printWarnings(warnings = []) {
   for (const warning of warnings) {
@@ -30,12 +38,158 @@ function printTip(tip, score) {
   }
 }
 
-export function createProgram() {
+async function promptForAddFields({
+  input = process.stdin,
+  output = process.stdout,
+  createInterface = createReadlineInterface
+} = {}) {
+  const rl = createInterface({ input, output });
+  try {
+    const content = (await rl.question('Content: ')).trim();
+    const trigger = (await rl.question('Trigger: ')).trim();
+    return { content, trigger };
+  } finally {
+    rl.close();
+  }
+}
+
+async function addTipFromOptions(options, {
+  saveTipImpl = saveTip,
+  normalizeTipCandidateImpl = normalizeTipCandidate,
+  tipsDir = getTipsDir(),
+  indexPath = getIndexPath(),
+  embedder,
+  promptForFields = promptForAddFields,
+  yaml = YAML
+} = {}) {
+  const trackedOptions = [
+    'content',
+    'trigger',
+    'category',
+    'domain',
+    'priority',
+    'tags',
+    'steps',
+    'purpose',
+    'negativeExample',
+    'sourceTrajectory'
+  ];
+
+  const hasCliFlags = typeof options.getOptionValueSource === 'function'
+    ? trackedOptions.some((name) => options.getOptionValueSource(name) === 'cli')
+    : false;
+
+  let content = options.content;
+  let trigger = options.trigger;
+
+  if (!hasCliFlags) {
+    const prompted = await promptForFields();
+    content = prompted.content;
+    trigger = prompted.trigger;
+  } else if (!content || !trigger) {
+    throw new Error('Both --content and --trigger are required unless running with no flags.');
+  }
+
+  if (!content || !trigger) {
+    throw new Error('Tip content and trigger are required.');
+  }
+
+  const steps = normalizeListOption(options.steps);
+  const tip = normalizeTipCandidateImpl({
+    category: options.category,
+    priority: options.priority,
+    domain: options.domain,
+    content,
+    trigger,
+    tags: normalizeListOption(options.tags),
+    steps: steps || [],
+    purpose: options.purpose || '',
+    negative_example: options.negativeExample || ''
+  }, {
+    domain: options.domain,
+    sourceTrajectoryId: options.sourceTrajectory || 'manual',
+    sourceOutcome: 'irrelevant',
+    sourceDescription: options.sourceTrajectory
+      ? `Added manually via CLI from trajectory ${options.sourceTrajectory}`
+      : 'Added manually via CLI'
+  });
+
+  if (options.dryRun) {
+    console.log(yaml.stringify(tip, { indent: 2 }).trimEnd());
+    return { tip, saved: false, dryRun: true };
+  }
+
+  const result = await saveTipImpl(tip, { embedder, tipsDir, indexPath });
+  if (result.skipped) {
+    console.log(chalk.yellow(`Skipped ${tip.id}: ${result.reason}`));
+    return { ...result, saved: false, dryRun: false };
+  }
+
+  console.log(chalk.green(`Saved ${tip.id} to ${tipsDir}`));
+  return { ...result, saved: true, dryRun: false };
+}
+
+export function createProgram(deps = {}) {
+  const {
+    addTip = addTipFromOptions,
+    extractTipsFromInputImpl = extractTipsFromInput,
+    analyzeTrajectoryIntelligenceImpl = analyzeTrajectoryIntelligence,
+    batchContrastiveAnalysisImpl = batchContrastiveAnalysis,
+    injectTipsImpl = injectTips,
+    queryTipsImpl = queryTips,
+    consolidateTipsImpl = consolidateTips,
+    recordFeedbackImpl = recordFeedback,
+    reindexAllTipsImpl = reindexAllTips,
+    importTipsFromInputsImpl = importTipsFromInputs,
+    loadAllTipsImpl = loadAllTips,
+    seedBaseTipsImpl,
+    embedder,
+    promptForFields,
+    yaml,
+    runtimeContext = {}
+  } = deps;
+
+  function resolveContext() {
+    return {
+      tipsDir: runtimeContext.tipsDir ?? getTipsDir(),
+      indexPath: runtimeContext.indexPath ?? getIndexPath(),
+      embedder: runtimeContext.embedder ?? embedder
+    };
+  }
+
   const program = new Command();
   program
     .name('tips')
     .description('Trajectory-informed memory generation for self-improving agent systems')
     .version('0.1.0');
+
+  program
+    .command('add')
+    .description('Add a single tip manually')
+    .option('--content <content>', 'what to do')
+    .option('--trigger <trigger>', 'when this applies')
+    .option('--category <category>', 'tip category', 'strategy')
+    .option('--domain <domain>', 'tip domain', 'general')
+    .option('--priority <priority>', 'tip priority', 'medium')
+    .option('--tags <tags>', 'comma-separated tags')
+    .option('--steps <steps>', 'comma-separated action steps')
+    .option('--purpose <purpose>', 'why this tip matters')
+    .option('--negative-example <example>', 'what NOT to do')
+    .option('--source-trajectory <id>', 'source trajectory id')
+    .option('--dry-run', 'print YAML without writing')
+    .action(async (options, command) => {
+      const context = resolveContext();
+      return addTip({
+        ...options,
+        getOptionValueSource: (name) => command.getOptionValueSource(name)
+      }, {
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder,
+        promptForFields,
+        yaml
+      });
+    });
 
   program
     .command('extract')
@@ -47,11 +201,15 @@ export function createProgram() {
     .option('--no-analyze', 'skip Phase 1 trajectory analysis (faster, lower quality)')
     .option('--verbose', 'show full analysis output')
     .action(async (input, options) => {
-      const result = await extractTipsFromInput(input, {
+      const context = resolveContext();
+      const result = await extractTipsFromInputImpl(input, {
         section: options.section,
         dryRun: options.dryRun,
         domain: options.domain,
-        analyze: options.analyze !== false
+        analyze: options.analyze !== false,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
 
       console.log(chalk.green(`Outcome: ${result.trajectory_outcome}`));
@@ -116,7 +274,7 @@ export function createProgram() {
       }
 
       console.log(chalk.dim('Running Phase 1 trajectory analysis...'));
-      const analysis = await analyzeTrajectoryIntelligence(text, { domain: options.domain });
+      const analysis = await analyzeTrajectoryIntelligenceImpl(text, { domain: options.domain });
 
       if (options.json) {
         console.log(JSON.stringify(analysis, null, 2));
@@ -181,11 +339,15 @@ export function createProgram() {
     .option('--top <n>', 'result limit', '5')
     .option('--json', 'output JSON')
     .action(async (description, options) => {
-      const result = await queryTips(description, {
+      const context = resolveContext();
+      const result = await queryTipsImpl(description, {
         domain: options.domain,
         category: options.category,
         priority: options.priority,
-        top: Number(options.top || 5)
+        top: Number(options.top || 5),
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
 
       printWarnings(result.warnings);
@@ -210,10 +372,15 @@ export function createProgram() {
     .option('--focus <category>', 'focus category filter')
     .option('--domain <domain>', 'domain filter')
     .action(async (description, options) => {
-      const result = await injectTips(description, {
+      const context = resolveContext();
+      const result = await injectTipsImpl(description, {
         focus: options.focus,
         maxTokens: Number(options.maxTokens || 2000),
-        domain: options.domain
+        domain: options.domain,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder,
+        queryTipsImpl
       });
       printWarnings(result.warnings);
       console.log(result.prompt);
@@ -228,8 +395,8 @@ export function createProgram() {
     .option('--since <date>', 'ISO date lower bound')
     .option('--stats', 'show stats summary')
     .action(async (options) => {
-      const tipsDir = getTipsDir();
-      const { tips, warnings } = await loadAllTips(tipsDir);
+      const context = resolveContext();
+      const { tips, warnings } = await loadAllTipsImpl(context.tipsDir);
       printWarnings(warnings);
 
       const priorities = normalizeListOption(options.priority);
@@ -266,9 +433,13 @@ export function createProgram() {
     .option('--dry-run', 'preview merges')
     .option('--threshold <n>', 'similarity threshold', '0.85')
     .action(async (options) => {
-      const result = await consolidateTips({
+      const context = resolveContext();
+      const result = await consolidateTipsImpl({
         dryRun: options.dryRun,
-        threshold: Number(options.threshold || 0.85)
+        threshold: Number(options.threshold || 0.85),
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
       printWarnings(result.warnings);
       console.log(JSON.stringify(result, null, 2));
@@ -280,7 +451,8 @@ export function createProgram() {
     .argument('<tip-id>', 'tip id')
     .argument('<outcome>', 'success|failure|irrelevant')
     .action(async (tipId, outcome) => {
-      const result = await recordFeedback(tipId, outcome);
+      const context = resolveContext();
+      const result = await recordFeedbackImpl(tipId, outcome, { tipsDir: context.tipsDir });
       console.log(JSON.stringify({
         id: result.id,
         effectiveness: result.effectiveness,
@@ -313,10 +485,14 @@ export function createProgram() {
         throw new Error('No valid input files found. If using glob patterns, let your shell expand them.');
       }
 
-      const results = await importTipsFromInputs(existing, {
+      const context = resolveContext();
+      const results = await importTipsFromInputsImpl(existing, {
         section: options.section,
         domain: options.domain,
-        dryRun: options.dryRun
+        dryRun: options.dryRun,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
 
       const summary = {
@@ -331,7 +507,12 @@ export function createProgram() {
     .command('reindex')
     .description('Rebuild embeddings index from tip YAML files')
     .action(async () => {
-      const result = await reindexAllTips();
+      const context = resolveContext();
+      const result = await reindexAllTipsImpl({
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
+      });
       printWarnings(result.warnings);
       console.log(chalk.green(`Reindexed ${result.count} tip(s)`));
     });
@@ -343,9 +524,14 @@ export function createProgram() {
     .option('--skip-embeddings', 'copy YAMLs without generating embeddings')
     .action(async (options) => {
       const { seedBaseTips } = await import('./seed.js');
-      const result = await seedBaseTips({
+      const context = resolveContext();
+      const activeSeedBaseTips = seedBaseTipsImpl || seedBaseTips;
+      const result = await activeSeedBaseTips({
         baseDir: options.baseDir,
-        skipEmbeddings: options.skipEmbeddings
+        skipEmbeddings: options.skipEmbeddings,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
       console.log(chalk.green(`Seeded ${result.count} base tip(s)`));
       if (result.skipped > 0) {
@@ -378,9 +564,13 @@ export function createProgram() {
       }
 
       console.log(chalk.dim(`Analyzing ${trajectories.length} trajectories...`));
-      const results = await batchContrastiveAnalysis(trajectories, {
+      const context = resolveContext();
+      const results = await batchContrastiveAnalysisImpl(trajectories, {
         domain: options.domain,
-        dryRun: options.dryRun
+        dryRun: options.dryRun,
+        tipsDir: context.tipsDir,
+        indexPath: context.indexPath,
+        embedder: context.embedder
       });
 
       if (options.json) {
@@ -418,8 +608,8 @@ export function createProgram() {
     .description('Show tip effectiveness stats, identify stale/failing tips')
     .option('--json', 'output JSON')
     .action(async (options) => {
-      const tipsDir = getTipsDir();
-      const { tips, warnings } = await loadAllTips(tipsDir);
+      const context = resolveContext();
+      const { tips, warnings } = await loadAllTipsImpl(context.tipsDir);
       printWarnings(warnings);
 
       const stats = {

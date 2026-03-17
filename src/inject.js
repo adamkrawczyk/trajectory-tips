@@ -77,13 +77,20 @@ export async function injectTips(description, {
   focus,
   maxTokens = 2000,
   domain,
-  top = 5
+  top = 5,
+  tipsDir,
+  indexPath,
+  embedder,
+  queryTipsImpl = queryTips
 } = {}) {
-  const query = await queryTips(description, {
+  const query = await queryTipsImpl(description, {
     category: focus,
     domain,
     top,
-    includeNegative: true
+    includeNegative: true,
+    tipsDir,
+    indexPath,
+    embedder
   });
 
   const prompt = formatTipsForInjection(query.results, {
