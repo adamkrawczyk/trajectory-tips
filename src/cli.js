@@ -1,14 +1,22 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createInterface as createReadlineInterface } from 'node:readline/promises';
 import { Command } from 'commander';
 import chalk from 'chalk';
+import YAML from 'yaml';
 import { extractTipsFromInput, importTipsFromInputs } from './extract.js';
 import { analyzeTrajectoryIntelligence } from './analyzer.js';
 import { batchContrastiveAnalysis } from './contrastive.js';
 import { injectTips } from './inject.js';
 import { queryTips } from './retrieve.js';
-import { consolidateTips, recordFeedback, reindexAllTips } from './store.js';
-import { getTipsDir, loadAllTips, normalizeListOption } from './utils.js';
+import {
+  consolidateTips,
+  normalizeTipCandidate,
+  recordFeedback,
+  reindexAllTips,
+  saveTip
+} from './store.js';
+import { getTipsDir, getIndexPath, loadAllTips, normalizeListOption } from './utils.js';
 
 function printWarnings(warnings = []) {
   for (const warning of warnings) {
@@ -30,12 +38,121 @@ function printTip(tip, score) {
   }
 }
 
-export function createProgram() {
+async function promptForAddFields({
+  input = process.stdin,
+  output = process.stdout,
+  createInterface = createReadlineInterface
+} = {}) {
+  const rl = createInterface({ input, output });
+  try {
+    const content = (await rl.question('Content: ')).trim();
+    const trigger = (await rl.question('Trigger: ')).trim();
+    return { content, trigger };
+  } finally {
+    rl.close();
+  }
+}
+
+async function addTipFromOptions(options, {
+  saveTipImpl = saveTip,
+  normalizeTipCandidateImpl = normalizeTipCandidate,
+  embedder,
+  promptForFields = promptForAddFields,
+  yaml = YAML
+} = {}) {
+  const trackedOptions = [
+    'content',
+    'trigger',
+    'category',
+    'domain',
+    'priority',
+    'tags',
+    'sourceTrajectory',
+    'dryRun'
+  ];
+
+  const hasCliFlags = typeof options.getOptionValueSource === 'function'
+    ? trackedOptions.some((name) => options.getOptionValueSource(name) === 'cli')
+    : false;
+
+  let content = options.content;
+  let trigger = options.trigger;
+
+  if (!hasCliFlags) {
+    const prompted = await promptForFields();
+    content = prompted.content;
+    trigger = prompted.trigger;
+  } else if (!content || !trigger) {
+    throw new Error('Both --content and --trigger are required unless running with no flags.');
+  }
+
+  if (!content || !trigger) {
+    throw new Error('Tip content and trigger are required.');
+  }
+
+  const tip = normalizeTipCandidateImpl({
+    category: options.category,
+    priority: options.priority,
+    domain: options.domain,
+    content,
+    trigger,
+    tags: normalizeListOption(options.tags)
+  }, {
+    domain: options.domain,
+    sourceTrajectoryId: options.sourceTrajectory || 'manual',
+    sourceOutcome: 'irrelevant',
+    sourceDescription: options.sourceTrajectory
+      ? `Added manually via CLI from trajectory ${options.sourceTrajectory}`
+      : 'Added manually via CLI'
+  });
+
+  if (options.dryRun) {
+    console.log(yaml.stringify(tip, { indent: 2 }).trimEnd());
+    return { tip, saved: false, dryRun: true };
+  }
+
+  const result = await saveTipImpl(tip, { embedder, tipsDir: getTipsDir(), indexPath: getIndexPath() });
+  if (result.skipped) {
+    console.log(chalk.yellow(`Skipped ${tip.id}: ${result.reason}`));
+    return { ...result, saved: false, dryRun: false };
+  }
+
+  console.log(chalk.green(`Saved ${tip.id} to ${getTipsDir()}`));
+  return { ...result, saved: true, dryRun: false };
+}
+
+export function createProgram(deps = {}) {
+  const {
+    addTip = addTipFromOptions,
+    embedder,
+    promptForFields,
+    yaml
+  } = deps;
   const program = new Command();
   program
     .name('tips')
     .description('Trajectory-informed memory generation for self-improving agent systems')
     .version('0.1.0');
+
+  program
+    .command('add')
+    .description('Add a single tip manually')
+    .option('--content <content>', 'what to do')
+    .option('--trigger <trigger>', 'when this applies')
+    .option('--category <category>', 'tip category', 'strategy')
+    .option('--domain <domain>', 'tip domain', 'general')
+    .option('--priority <priority>', 'tip priority', 'medium')
+    .option('--tags <tags>', 'comma-separated tags')
+    .option('--source-trajectory <id>', 'source trajectory id')
+    .option('--dry-run', 'print YAML without writing')
+    .action(async (options, command) => addTip({
+      ...options,
+      getOptionValueSource: (name) => command.getOptionValueSource(name)
+    }, {
+      embedder,
+      promptForFields,
+      yaml
+    }));
 
   program
     .command('extract')

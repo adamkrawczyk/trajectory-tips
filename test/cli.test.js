@@ -5,7 +5,7 @@ import { createProgram } from '../src/cli.js';
 test('CLI registers expected commands', () => {
   const program = createProgram();
   const names = program.commands.map((c) => c.name());
-  for (const required of ['extract', 'query', 'inject', 'list', 'consolidate', 'feedback', 'import', 'reindex']) {
+  for (const required of ['add', 'extract', 'query', 'inject', 'list', 'consolidate', 'feedback', 'import', 'reindex']) {
     assert.ok(names.includes(required), `missing command ${required}`);
   }
 });

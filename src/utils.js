@@ -18,7 +18,7 @@ export function getTipsDir() {
 }
 
 export function getIndexPath() {
-  return DEFAULT_INDEX_PATH;
+  return path.resolve(process.cwd(), 'index.json');
 }
 
 export async function ensureDir(dirPath) {
