@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   cosineSimilarity,
+  getTipsDir,
   writeTipYaml,
   readTipYaml,
   loadAllTips
@@ -37,4 +38,24 @@ test('YAML tip serialization/deserialization round trip', async () => {
   const loaded = await loadAllTips(dir);
   assert.equal(loaded.tips.length, 1);
   assert.equal(loaded.tips[0].id, 'tip-1');
+});
+
+test('getTipsDir resolves from current cwd at call time when TIPS_DIR is unset', async () => {
+  const previousCwd = process.cwd();
+  const previousTipsDir = process.env.TIPS_DIR;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tips-utils-cwd-'));
+
+  delete process.env.TIPS_DIR;
+  process.chdir(dir);
+
+  try {
+    assert.equal(getTipsDir(), path.join(dir, 'tips'));
+  } finally {
+    process.chdir(previousCwd);
+    if (previousTipsDir === undefined) {
+      delete process.env.TIPS_DIR;
+    } else {
+      process.env.TIPS_DIR = previousTipsDir;
+    }
+  }
 });

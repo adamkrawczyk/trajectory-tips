@@ -2,23 +2,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import YAML from 'yaml';
 
-export const DEFAULT_TIPS_DIR = process.env.TIPS_DIR
-  ? path.resolve(process.env.TIPS_DIR)
-  : path.resolve(process.cwd(), 'tips');
-
-export const DEFAULT_INDEX_PATH = path.resolve(process.cwd(), 'index.json');
-
 export const CATEGORY_VALUES = ['strategy', 'recovery', 'optimization'];
 export const PRIORITY_VALUES = ['critical', 'high', 'medium', 'low'];
 
 export function getTipsDir() {
   return process.env.TIPS_DIR
     ? path.resolve(process.env.TIPS_DIR)
-    : DEFAULT_TIPS_DIR;
+    : path.resolve(process.cwd(), 'tips');
 }
 
 export function getIndexPath() {
-  return DEFAULT_INDEX_PATH;
+  return path.resolve(process.cwd(), 'index.json');
 }
 
 export async function ensureDir(dirPath) {

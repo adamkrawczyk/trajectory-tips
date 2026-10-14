@@ -145,7 +145,10 @@ function formatAnalysisSummary(analysis, label) {
 async function batchContrastiveAnalysis(trajectories, {
   client,
   domain = 'general',
-  dryRun = false
+  dryRun = false,
+  tipsDir,
+  indexPath,
+  embedder
 } = {}) {
   const activeClient = client || createOpenAIClient();
   const results = [];
@@ -198,7 +201,7 @@ async function batchContrastiveAnalysis(trajectories, {
         }));
 
       if (!dryRun && tips.length > 0) {
-        await saveManyTips(tips);
+        await saveManyTips(tips, { tipsDir, indexPath, embedder });
       }
 
       results.push({
@@ -240,7 +243,7 @@ async function batchContrastiveAnalysis(trajectories, {
           }));
 
         if (!dryRun && tips.length > 0) {
-          await saveManyTips(tips);
+          await saveManyTips(tips, { tipsDir, indexPath, embedder });
         }
 
         results.push({

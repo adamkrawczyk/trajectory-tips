@@ -11,6 +11,8 @@ const DEFAULT_BASE_DIR = path.resolve(__dirname, '..', 'examples');
 export async function seedBaseTips({
   baseDir = DEFAULT_BASE_DIR,
   tipsDir = getTipsDir(),
+  indexPath,
+  embedder = generateEmbedding,
   skipEmbeddings = false
 } = {}) {
   await ensureDir(tipsDir);
@@ -39,12 +41,12 @@ export async function seedBaseTips({
 
     if (!skipEmbeddings) {
       try {
-        const indexPath = path.resolve(process.cwd(), 'index.json');
-        const index = await loadIndex(indexPath);
+        const resolvedIndexPath = indexPath || path.resolve(process.cwd(), 'index.json');
+        const index = await loadIndex(resolvedIndexPath);
         const text = toEmbeddingText(tip);
-        const embedding = await generateEmbedding(text);
+        const embedding = await embedder(text);
         index.tips[tip.id] = { text, embedding, updated: tip.updated };
-        await saveIndex(index, indexPath);
+        await saveIndex(index, resolvedIndexPath);
       } catch (err) {
         // Embeddings optional during seed — can reindex later
         console.error(`Warning: embedding failed for ${tip.id}: ${err.message}`);

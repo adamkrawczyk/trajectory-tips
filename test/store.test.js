@@ -10,11 +10,7 @@ import {
   findDuplicates,
   normalizeTipCandidate
 } from '../src/store.js';
-
-function fakeEmbedder(text) {
-  const codePointSum = [...text].reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  return Promise.resolve([text.length, codePointSum, 1]);
-}
+import { fakeEmbedder } from './helpers.js';
 
 function mkTip(id, content) {
   return normalizeTipCandidate({
