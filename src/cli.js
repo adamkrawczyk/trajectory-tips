@@ -16,7 +16,14 @@ import {
   reindexAllTips,
   saveTip
 } from './store.js';
-import { getTipsDir, getIndexPath, loadAllTips, normalizeListOption } from './utils.js';
+import {
+  CATEGORY_VALUES,
+  PRIORITY_VALUES,
+  getTipsDir,
+  getIndexPath,
+  loadAllTips,
+  normalizeListOption
+} from './utils.js';
 
 function printWarnings(warnings = []) {
   for (const warning of warnings) {
@@ -44,9 +51,18 @@ async function promptForAddFields({
   createInterface = createReadlineInterface
 } = {}) {
   const rl = createInterface({ input, output });
+  // Read via the line iterator rather than rl.question(): with piped stdin the
+  // lines arrive before the second question() is registered and get dropped,
+  // leaving the process to exit silently with nothing saved.
+  const lines = rl[Symbol.asyncIterator]();
+  const ask = async (label) => {
+    output.write(label);
+    const { value, done } = await lines.next();
+    return done ? '' : String(value).trim();
+  };
   try {
-    const content = (await rl.question('Content: ')).trim();
-    const trigger = (await rl.question('Trigger: ')).trim();
+    const content = await ask('Content: ');
+    const trigger = await ask('Trigger: ');
     return { content, trigger };
   } finally {
     rl.close();
@@ -92,6 +108,13 @@ async function addTipFromOptions(options, {
 
   if (!content || !trigger) {
     throw new Error('Tip content and trigger are required.');
+  }
+
+  if (options.category && !CATEGORY_VALUES.includes(options.category)) {
+    throw new Error(`Invalid --category "${options.category}". Expected one of: ${CATEGORY_VALUES.join(', ')}.`);
+  }
+  if (options.priority && !PRIORITY_VALUES.includes(options.priority)) {
+    throw new Error(`Invalid --priority "${options.priority}". Expected one of: ${PRIORITY_VALUES.join(', ')}.`);
   }
 
   const steps = normalizeListOption(options.steps);

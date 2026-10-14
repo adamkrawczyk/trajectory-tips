@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -205,4 +206,29 @@ test('tips add errors when required flags are missing', async () => {
       /Both --content and --trigger are required unless running with no flags\./
     );
   });
+});
+
+test('tips add rejects invalid --category and --priority', async () => {
+  await withTempCliContext(async ({ tipsDir, indexPath }) => {
+    const run = (extra) => createProgram({
+      runtimeContext: { tipsDir, indexPath, embedder: fakeEmbedder }
+    }).parseAsync(['add', '--content', 'x', '--trigger', 'y', ...extra], { from: 'user' });
+
+    await assert.rejects(run(['--category', 'bogus']), /Invalid --category "bogus"/);
+    await assert.rejects(run(['--priority', 'urgent']), /Invalid --priority "urgent"/);
+    await assert.rejects(fs.access(tipsDir));
+  });
+});
+
+test('tips add interactive mode reads both fields from piped stdin', async () => {
+  const bin = path.resolve(import.meta.dirname, '..', 'bin', 'tips.js');
+  const child = spawn(process.execPath, [bin, 'add', '--dry-run'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stdin.end('Pin dependency versions\nBuild breaks after a fresh install\n');
+
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  assert.equal(code, 0);
+  assert.match(stdout, /content: Pin dependency versions/);
+  assert.match(stdout, /trigger: Build breaks after a fresh install/);
 });
